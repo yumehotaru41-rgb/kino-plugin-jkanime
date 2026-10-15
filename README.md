@@ -1,49 +1,21 @@
 # JKAnime — plugin de Kino
 
-Plugin de [Kino](https://kinotvapp.github.io/) para **jkanime.net** (y espejo jkanime.bz).
+**v1.2.0** — Usa **jkanime.bz** (sin Cloudflare). `jkanime.net` está bloqueado por CF y no responde a plugins.
 
-**Versión 1.1.0**
+## Instalación / actualización
+
+1. Sube estos archivos al repo `yumehotaru41-rgb/kino-plugin-jkanime`
+2. En Kino: Plugins → JKAnime → Actualizar (o desinstala y agrega de nuevo)
+3. Busca p. ej. `Naruto` o `Yakitate`
 
 ## Qué hace
 
-- **search** — Usa el endpoint AJAX `/ajax/ajax_search/` y, si falla, la página `/buscar/`. Ranking por coincidencia exacta/prefijo.
-- **home** — Filas: Últimos episodios, En emisión, Animes, Películas.
-- **browse** — “Ver más” con paginación.
-- **episodes** — Lista vía `/ajax/pagination_episodes/{id}/{pag}/` (como CloudStream).
-- **resolve** — Extrae `var servers = [{ remote: base64 }]` y otros embeds; ofrece **alternativas** para elegir servidor a mano.
+- Búsqueda en `/buscar/?q=` con tarjetas `anime__item`
+- Home: recientes, últimos episodios, emisión, películas
+- Episodios según el total del anime
+- Servidores desde `var servers = [{remote: base64, server: "..."}]`
+- Alternativas manuales en el reproductor
 
-## Ajustes
+## Ajuste
 
-| Ajuste | Descripción |
-|--------|-------------|
-| **Dominio** | `jkanime.net` o espejo `jkanime.bz` |
-| **Servidor preferido** | Automático, StreamWish, VOE, MixDrop, etc. |
-
-## Instalación
-
-```
-yumehotaru41-rgb/kino-plugin-jkanime
-```
-
-En Kino: **Ajustes → Plugins → Agregar**.
-
-Añade el topic `kino-plugin` en el repositorio de GitHub.
-
-## Cloudflare
-
-El sitio usa Cloudflare. El plugin declara `"browser": "pages"` para abrir páginas en el navegador oculto cuando el fetch normal recibe el challenge. En el dispositivo real suele funcionar mejor que desde un servidor.
-
-Si no carga nada:
-
-1. Cambia el **Dominio** a `jkanime.bz` en Configurar.
-2. Actualiza el plugin (sube esta versión 1.1.0 al repo).
-3. Reinstala o fuerza actualización en Kino.
-
-## Archivos
-
-```
-kino-plugin.json
-plugin.js
-icon.png
-README.md
-```
+**Servidor preferido**: StreamWish (por defecto), VOE, MixDrop, etc.
