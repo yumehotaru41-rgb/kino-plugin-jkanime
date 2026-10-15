@@ -1,29 +1,30 @@
 /// <reference path="./kino.d.ts" />
 /**
- * JKAnime plugin for Kino — v1.2.0
- * Uses jkanime.bz (no Cloudflare). Parses anime__item cards and var servers JSON.
+ * JKAnime plugin for Kino — v1.2.1
+ * jkanime.bz — ids sin ":" (Kino descarta id con caracteres fuera de [A-Za-z0-9._~-])
  */
 
 const BASE = "https://jkanime.bz";
 const UA =
   "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36";
 
-function hdr(extra) {
-  return Object.assign(
-    {
-      "User-Agent": UA,
-      Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-      "Accept-Language": "es-ES,es;q=0.9",
-      Referer: BASE + "/",
-    },
-    extra || {}
-  );
+function hdr() {
+  return {
+    "User-Agent": UA,
+    Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "es-ES,es;q=0.9",
+    Referer: BASE + "/",
+  };
 }
 
 async function get(path) {
   const url = path.startsWith("http") ? path : BASE + path;
-  const r = await kino.fetch(url, { headers: hdr(), timeoutMs: 20000 });
-  if (!r.ok) throw kino.error("unavailable", "http " + r.status);
+  const r = await kino.fetch(url, { headers: hdr(), timeoutMs: 18000 });
+  if (!r.ok) {
+    throw kino.error("unavailable", "jkanime " + r.status, {
+      userMessage: "jkanime.bz no respondió (" + r.status + ").",
+    });
+  }
   return await r.text();
 }
 
@@ -43,103 +44,130 @@ function strip(s) {
 
 function b64(s) {
   try {
-    let t = s.replace(/\s/g, "");
-    // pad
+    var t = String(s).replace(/\s/g, "");
     while (t.length % 4) t += "=";
     return atob(t);
-  } catch (_) {
+  } catch (e) {
     return "";
   }
 }
 
 function abs(u) {
   if (!u) return "";
-  if (u.startsWith("//")) return "https:" + u;
-  if (u.startsWith("http")) return u;
-  if (u.startsWith("/")) return BASE + u;
+  if (u.indexOf("//") === 0) return "https:" + u;
+  if (u.indexOf("http") === 0) return u;
+  if (u.charAt(0) === "/") return BASE + u;
   return BASE + "/" + u;
 }
 
 function pretty(name) {
-  const n = String(name || "").toLowerCase();
-  if (n.includes("streamwish") || n.includes("sfastwish") || n === "sw") return "StreamWish";
-  if (n.includes("voe")) return "VOE";
-  if (n.includes("mixdrop")) return "MixDrop";
-  if (n.includes("mp4upload")) return "Mp4Upload";
-  if (n.includes("filemoon")) return "Filemoon";
-  if (n.includes("streamtape")) return "Streamtape";
-  if (n.includes("mega")) return "Mega";
-  if (n.includes("mediafire")) return "Mediafire";
-  if (n.includes("ok")) return "OK.ru";
-  if (n.includes("desu") || n.includes("um") || n.includes("nozomi")) return "Desu";
-  if (n.includes("jkmedia") || n.includes("xtreme")) return "Xtreme";
+  var n = String(name || "").toLowerCase();
+  if (n.indexOf("streamwish") >= 0 || n.indexOf("sfastwish") >= 0) return "StreamWish";
+  if (n.indexOf("voe") >= 0) return "VOE";
+  if (n.indexOf("mixdrop") >= 0) return "MixDrop";
+  if (n.indexOf("mp4upload") >= 0) return "Mp4Upload";
+  if (n.indexOf("filemoon") >= 0) return "Filemoon";
+  if (n.indexOf("streamtape") >= 0) return "Streamtape";
+  if (n.indexOf("vidhide") >= 0) return "Vidhide";
+  if (n.indexOf("mega") >= 0) return "Mega";
+  if (n.indexOf("mediafire") >= 0) return "Mediafire";
+  if (n.indexOf("ok") >= 0) return "OK.ru";
+  if (n.indexOf("desu") >= 0 || n.indexOf("jkplayer") >= 0) return "JKPlayer";
   return name ? String(name) : "Servidor";
 }
 
-function rank(items, q) {
-  const norm = (s) =>
-    String(s || "")
-      .toLowerCase()
-      .normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, "")
-      .replace(/[^a-z0-9\s]/g, " ")
-      .replace(/\s+/g, " ")
-      .trim();
-  const nq = norm(q);
-  if (!nq) return items;
-  return items
-    .map((it) => {
-      const nt = norm(it.title);
-      let score = 0;
-      if (nt === nq) score = 1000;
-      else if (nt.startsWith(nq)) score = 800;
-      else if (nt.includes(nq)) score = 500;
-      else {
-        let hit = 0;
-        for (const w of nq.split(" ")) if (w.length > 1 && nt.includes(w)) hit++;
-        score = hit * 120;
-      }
-      return { it, score };
-    })
-    .filter((x) => x.score > 0)
-    .sort((a, b) => b.score - a.score)
-    .map((x) => x.it);
+/** Solo [A-Za-z0-9._~-] — sin ":" ni otros símbolos */
+function makeId(slug) {
+  return String(slug || "x").replace(/[^A-Za-z0-9._~-]/g, "-").slice(0, 120);
 }
 
-/** Parse .anime__item cards (search results) */
-function parseAnimeItems(html) {
-  const items = [];
-  const seen = new Set();
-  const blocks = html.split(/<div class="anime__item">/i).slice(1);
-  for (const block of blocks) {
-    const hrefM = block.match(/href=["'](https?:\/\/[^"']+\/([a-z0-9-]+)\/?)["']/i);
-    if (!hrefM) continue;
-    const slug = hrefM[2];
-    if (!slug || seen.has(slug)) continue;
-    if (["buscar", "directorio", "dash", "genero", "horario"].includes(slug)) continue;
-    seen.add(slug);
+function norm(s) {
+  // sin String.normalize (puede faltar en QuickJS)
+  return String(s || "")
+    .toLowerCase()
+    .replace(/[áàäâ]/g, "a")
+    .replace(/[éèëê]/g, "e")
+    .replace(/[íìïî]/g, "i")
+    .replace(/[óòöô]/g, "o")
+    .replace(/[úùüû]/g, "u")
+    .replace(/ñ/g, "n")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
 
-    let title = "";
-    const h5 = block.match(/<h5[^>]*>\s*<a[^>]*>([\s\S]*?)<\/a>/i);
+function rank(items, q) {
+  var nq = norm(q);
+  if (!nq) return items;
+  var scored = [];
+  for (var i = 0; i < items.length; i++) {
+    var it = items[i];
+    var nt = norm(it.title);
+    var score = 0;
+    if (nt === nq) score = 1000;
+    else if (nt.indexOf(nq) === 0) score = 800;
+    else if (nt.indexOf(nq) >= 0) score = 500;
+    else {
+      var words = nq.split(" ");
+      var hit = 0;
+      for (var w = 0; w < words.length; w++) {
+        if (words[w].length > 1 && nt.indexOf(words[w]) >= 0) hit++;
+      }
+      score = hit * 120;
+    }
+    if (score > 0) scored.push({ it: it, score: score });
+  }
+  scored.sort(function (a, b) {
+    return b.score - a.score;
+  });
+  var out = [];
+  for (var j = 0; j < scored.length; j++) out.push(scored[j].it);
+  return out;
+}
+
+function parseAnimeItems(html) {
+  var items = [];
+  var seen = {};
+  // Partir por anime__item (con o sin comillas extra)
+  var parts = html.split(/anime__item/);
+  for (var i = 1; i < parts.length; i++) {
+    var block = parts[i].slice(0, 2500);
+    var hrefM = block.match(/href=["']https?:\/\/[^"']+\/([a-z0-9-]+)\/?["']/i);
+    if (!hrefM) continue;
+    var slug = hrefM[1];
+    if (!slug || seen[slug]) continue;
+    if (
+      slug === "buscar" ||
+      slug === "directorio" ||
+      slug === "dash" ||
+      slug === "genero" ||
+      slug === "horario" ||
+      slug === "peliculas" ||
+      slug === "ovas"
+    )
+      continue;
+    seen[slug] = true;
+
+    var title = "";
+    var h5 = block.match(/<h5[^>]*>[\s\S]*?<a[^>]*>([\s\S]*?)<\/a>/i);
     if (h5) title = strip(h5[1]);
     if (!title) {
-      const t = block.match(/<h5[^>]*>([\s\S]*?)<\/h5>/i);
-      if (t) title = strip(t[1]);
+      var h5b = block.match(/<h5[^>]*>([\s\S]*?)<\/h5>/i);
+      if (h5b) title = strip(h5b[1]);
     }
     if (!title) title = slug.replace(/-/g, " ");
 
-    let poster = "";
-    const bg = block.match(/data-setbg=["']([^"']+)["']/i);
+    var poster = "";
+    var bg = block.match(/data-setbg=["']([^"']+)["']/i);
     if (bg) poster = abs(bg[1]);
 
-    const typeLi = (block.match(/<li class="anime">([\s\S]*?)<\/li>/i) || [])[1] || "";
-    const kind = /pelicula|movie/i.test(typeLi + block) ? "movie" : "series";
+    var kind = /pelicula|movie/i.test(block) ? "movie" : "series";
 
     items.push({
-      id: "jk:" + slug,
+      id: makeId(slug),
       ref: slug,
-      title,
-      kind,
+      title: title,
+      kind: kind,
       poster: poster || undefined,
       genres: ["anime"],
     });
@@ -147,27 +175,28 @@ function parseAnimeItems(html) {
   return items;
 }
 
-/** Parse home page cards (card-title) */
 function parseHomeCards(html) {
-  const items = [];
-  const seen = new Set();
-  // <h5 class="card-title"><a href="...slug/">Title</a>
-  const re =
-    /<h5[^>]*class="[^"]*card-title[^"]*"[^>]*>\s*<a[^>]+href=["'](https?:\/\/[^"']+\/([a-z0-9-]+)\/?)["'][^>]*>([\s\S]*?)<\/a>/gi;
-  let m;
-  while ((m = re.exec(html)) !== null) {
-    const slug = m[2];
-    if (seen.has(slug) || ["buscar", "directorio", "dash"].includes(slug)) continue;
-    seen.add(slug);
-    let poster = "";
-    // look backwards for img
-    const before = html.slice(Math.max(0, m.index - 800), m.index);
-    const img = before.match(/src=["'](https?:\/\/[^"']+\.(?:jpg|jpeg|png|webp)[^"']*)["']/i);
+  var items = [];
+  var seen = {};
+  var re =
+    /href=["']https?:\/\/jkanime\.bz\/([a-z0-9-]+)\/?["'][^>]*>[\s\S]{0,120}?(?:class="[^"]*card-title[^"]*"|<h5)/gi;
+  // Más robusto: card-title con enlace
+  var re2 =
+    /<h5[^>]*class="[^"]*card-title[^"]*"[^>]*>\s*<a[^>]+href=["']https?:\/\/[^"']+\/([a-z0-9-]+)\/?["'][^>]*>([\s\S]*?)<\/a>/gi;
+  var m;
+  while ((m = re2.exec(html)) !== null) {
+    var slug = m[1];
+    if (seen[slug]) continue;
+    if (slug === "buscar" || slug === "directorio" || slug === "dash") continue;
+    seen[slug] = true;
+    var poster = "";
+    var before = html.slice(Math.max(0, m.index - 900), m.index);
+    var img = before.match(/src=["'](https?:\/\/[^"']+\.(?:jpg|jpeg|png|webp)[^"']*)["']/i);
     if (img) poster = img[1];
     items.push({
-      id: "jk:" + slug,
+      id: makeId(slug),
       ref: slug,
-      title: strip(m[3]),
+      title: strip(m[2]),
       kind: "series",
       poster: poster || undefined,
       genres: ["anime"],
@@ -176,143 +205,95 @@ function parseHomeCards(html) {
   return items;
 }
 
-/** Parse var servers = [...] */
 function parseServers(html) {
-  const servers = [];
-  const m = html.match(/var\s+servers\s*=\s*(\[[\s\S]*?\]);/);
+  var servers = [];
+  var m = html.match(/var\s+servers\s*=\s*(\[[\s\S]*?\]);/);
   if (m) {
     try {
-      const arr = JSON.parse(m[1]);
-      for (const s of arr) {
-        let url = s.remote || "";
-        if (url && !url.startsWith("http")) url = b64(url).replace(/\n/g, "").trim();
-        if (!url || !url.startsWith("http")) continue;
-        // skip download-only hosts for primary play (mega/mediafire still listed as alt)
-        const name = String(s.server || "server");
+      var arr = JSON.parse(m[1]);
+      for (var i = 0; i < arr.length; i++) {
+        var s = arr[i];
+        var url = s.remote || "";
+        if (url && url.indexOf("http") !== 0) url = b64(url).replace(/\n/g, "").trim();
+        if (!url || url.indexOf("http") !== 0) continue;
+        var name = String(s.server || "server");
         servers.push({
           name: name.toLowerCase(),
-          url,
+          url: url,
           label: pretty(name) + (s.size ? " (" + s.size + ")" : ""),
         });
       }
-    } catch (_) {}
+    } catch (e) {}
   }
 
-  // var video = [] iframes
-  if (html.includes("var video = []") || html.includes("player_conte")) {
-    for (const m2 of html.matchAll(/src=["'](https?:\/\/[^"']+)["']/gi)) {
-      const url = m2[1];
-      if (/jkplayer\//i.test(url) || /player_conte/i.test(html.slice(m2.index - 80, m2.index))) {
-        if (!servers.some((x) => x.url === url)) {
-          servers.push({ name: "jkplayer", url, label: "JKPlayer" });
-        }
-      }
-    }
-  }
-
-  // plain iframes
-  for (const m3 of html.matchAll(/<iframe[^>]+src=["'](https?:\/\/[^"']+)["']/gi)) {
-    const url = m3[1];
-    if (/ads|google|facebook|twitter/i.test(url)) continue;
-    if (!servers.some((x) => x.url === url)) {
-      let host = "embed";
-      try {
-        host = new URL(url).hostname.replace(/^www\./, "");
-      } catch (_) {}
-      servers.push({ name: host, url, label: pretty(host) });
-    }
+  // iframes jkplayer
+  var re = /src=["'](https?:\/\/[^"']*jkplayer[^"']+)["']/gi;
+  var m2;
+  while ((m2 = re.exec(html)) !== null) {
+    var u = m2[1];
+    var exists = false;
+    for (var j = 0; j < servers.length; j++) if (servers[j].url === u) exists = true;
+    if (!exists) servers.push({ name: "jkplayer", url: u, label: "JKPlayer" });
   }
 
   return servers;
 }
 
 function preferOrder(servers) {
-  const prefer = (kino.config && kino.config.get("preferServer")) || "streamwish";
-  if (!prefer || prefer === "auto") return servers;
-  const idx = servers.findIndex(
-    (s) => s.name.includes(prefer) || s.label.toLowerCase().includes(prefer)
-  );
-  if (idx > 0) {
-    const [p] = servers.splice(idx, 1);
-    servers.unshift(p);
+  var prefer = "streamwish";
+  try {
+    if (kino.config && kino.config.get) prefer = kino.config.get("preferServer") || prefer;
+  } catch (e) {}
+  if (prefer && prefer !== "auto") {
+    for (var i = 0; i < servers.length; i++) {
+      if (
+        servers[i].name.indexOf(prefer) >= 0 ||
+        servers[i].label.toLowerCase().indexOf(prefer) >= 0
+      ) {
+        var p = servers.splice(i, 1)[0];
+        servers.unshift(p);
+        break;
+      }
+    }
   }
-  // Put stream hosts before pure download hosts
-  const playable = [];
-  const downloads = [];
-  for (const s of servers) {
-    if (/mega|mediafire|google.?drive/i.test(s.name)) downloads.push(s);
-    else playable.push(s);
+  var playable = [];
+  var downloads = [];
+  for (var k = 0; k < servers.length; k++) {
+    if (/mega|mediafire|google/.test(servers[k].name)) downloads.push(servers[k]);
+    else playable.push(servers[k]);
   }
   return playable.concat(downloads);
 }
 
 async function resolveServer(server, referer) {
-  const url = server.url;
-
+  var url = server.url;
   if (/\.(m3u8|mp4)(\?|$)/i.test(url)) {
     return {
-      url,
+      url: url,
       mime: /\.m3u8/i.test(url) ? "application/x-mpegURL" : "video/mp4",
       label: server.label,
       headers: { Referer: referer || BASE + "/", "User-Agent": UA },
     };
   }
-
-  // Skip mega/mediafire for auto (not streamable in-app easily)
   if (/mega\.nz|mediafire\.com/i.test(url)) return null;
 
   try {
-    const body = await get(url.startsWith("http") ? url : BASE + url);
-    // follow jkplayer internal
-    if (/jkplayer/i.test(url) || /jkplayer/i.test(body.slice(0, 500))) {
-      const m3u = body.match(/(https?:\\\/\\\/[^"'\s]+\\.m3u8[^"'\s]*|https?:\/\/[^"'\s]+\.m3u8[^"'\s]*)/i);
-      if (m3u) {
-        const u = m3u[1].replace(/\\\//g, "/").replace(/\\u0026/g, "&");
-        return {
-          url: u,
-          mime: "application/x-mpegURL",
-          label: server.label,
-          headers: { Referer: url, "User-Agent": UA },
-        };
-      }
-      const file = body.match(/file\s*:\s*["'](https?:\/\/[^"']+)["']/i);
-      if (file) {
-        return {
-          url: file[1],
-          mime: file[1].includes(".m3u8") ? "application/x-mpegURL" : "video/mp4",
-          label: server.label,
-          headers: { Referer: url, "User-Agent": UA },
-        };
-      }
-      const src = body.match(/<source[^>]+src=["'](https?:\/\/[^"']+)["']/i);
-      if (src) {
-        return {
-          url: src[1],
-          mime: src[1].includes(".m3u8") ? "application/x-mpegURL" : "video/mp4",
-          label: server.label,
-          headers: { Referer: url, "User-Agent": UA },
-        };
-      }
-      // redirect location style
-      const loc = body.match(/location\.href\s*=\s*["'](https?:\/\/[^"']+)["']/i);
-      if (loc) {
-        return resolveServer({ name: server.name, url: loc[1], label: server.label }, url);
-      }
-    }
-
-    // generic embed
-    const patterns = [
+    var body = await get(url);
+    var patterns = [
       /(https?:\/\/[^"'\s\\]+\.m3u8[^"'\s\\]*)/i,
       /(https?:\/\/[^"'\s\\]+\.mp4[^"'\s\\]*)/i,
       /file\s*:\s*["'](https?:\/\/[^"']+)["']/i,
       /sources?\s*:\s*\[[\s\S]*?["'](https?:\/\/[^"']+)["']/i,
       /<source[^>]+src=["'](https?:\/\/[^"']+)["']/i,
     ];
-    for (const p of patterns) {
-      const mm = body.match(p);
+    for (var i = 0; i < patterns.length; i++) {
+      var mm = body.match(patterns[i]);
       if (mm) {
-        const u = mm[1].replace(/\\\//g, "/").replace(/\\u0026/g, "&").replace(/&amp;/g, "&");
-        if (u.startsWith("http") && !/google|facebook|ads/i.test(u)) {
+        var u = mm[1]
+          .replace(/\\\//g, "/")
+          .replace(/\\u0026/g, "&")
+          .replace(/&amp;/g, "&");
+        if (u.indexOf("http") === 0 && !/google|facebook|ads/i.test(u)) {
           return {
             url: u,
             mime: /\.m3u8/i.test(u) ? "application/x-mpegURL" : "video/mp4",
@@ -322,193 +303,194 @@ async function resolveServer(server, referer) {
         }
       }
     }
-  } catch (_) {}
-
+  } catch (e) {}
   return null;
+}
+
+function dedupe(items) {
+  var map = {};
+  var out = [];
+  for (var i = 0; i < items.length; i++) {
+    if (!map[items[i].ref]) {
+      map[items[i].ref] = true;
+      out.push(items[i]);
+    }
+  }
+  return out;
 }
 
 // -------------------- exports --------------------
 
 export async function search(query) {
   await Promise.resolve();
-  const q = (query.q || "").trim();
+  var q = ((query && query.q) || "").trim();
   if (!q) return [];
 
-  // HTML search: /buscar/?q=
-  const path = "/buscar/?q=" + encodeURIComponent(q);
-  const html = await get(path);
-  let items = parseAnimeItems(html);
+  var html = await get("/buscar/?q=" + encodeURIComponent(q));
+  var items = parseAnimeItems(html);
   if (items.length === 0) items = parseHomeCards(html);
-
   items = rank(items, q);
-
-  // dedupe
-  const map = new Map();
-  for (const it of items) if (!map.has(it.ref)) map.set(it.ref, it);
-  items = Array.from(map.values()).slice(0, 100);
-
+  items = dedupe(items);
+  if (items.length > 100) items = items.slice(0, 100);
   return items;
 }
 
 export async function home() {
   await Promise.resolve();
-  const rows = [];
+  var rows = [];
+
+  var html = await get("/");
+  var cards = parseHomeCards(html);
+
+  // Últimos episodios (enlaces /slug/N/)
+  var latest = [];
+  var seen = {};
+  var reEp = /href=["']https?:\/\/jkanime\.bz\/([a-z0-9-]+)\/(\d+)\/?["']/gi;
+  var m;
+  while ((m = reEp.exec(html)) !== null) {
+    var slug = m[1];
+    if (seen[slug]) continue;
+    if (slug === "buscar" || slug === "directorio") continue;
+    seen[slug] = true;
+    // buscar título en cards si existe
+    var title = slug.replace(/-/g, " ");
+    for (var i = 0; i < cards.length; i++) {
+      if (cards[i].ref === slug) {
+        title = cards[i].title;
+        break;
+      }
+    }
+    latest.push({
+      id: makeId(slug),
+      ref: slug,
+      title: title,
+      kind: "series",
+      poster: undefined,
+      genres: ["anime"],
+    });
+    if (latest.length >= 24) break;
+  }
+  if (latest.length) {
+    rows.push({
+      id: "ultimos",
+      title: "Ultimos episodios",
+      items: latest,
+      ref: "dir-ultimos",
+      genre: "anime",
+    });
+  }
+
+  if (cards.length) {
+    rows.push({
+      id: "recientes",
+      title: "Animes recientes",
+      items: cards.slice(0, 30),
+      ref: "dir-recientes",
+      genre: "anime",
+    });
+  }
 
   try {
-    const html = await get("/");
-    const cards = parseHomeCards(html);
-    if (cards.length) {
-      rows.push({
-        id: "recientes",
-        title: "Animes recientes",
-        items: cards.slice(0, 30),
-        ref: "dir:recientes",
-        genre: "anime",
-      });
-    }
-    // latest episode style links from home
-    const latest = [];
-    const seen = new Set();
-    const re =
-      /href=["'](https?:\/\/jkanime\.bz\/([a-z0-9-]+)\/(\d+)\/?)["'][^>]*>[\s\S]{0,200}?<h5[^>]*class="[^"]*card-title[^"]*"[^>]*>[\s\S]*?<a[^>]*>([\s\S]*?)<\/a>/gi;
-    // simpler: unique slugs from episode links
-    for (const m of html.matchAll(
-      /href=["']https?:\/\/jkanime\.bz\/([a-z0-9-]+)\/(\d+)\/?["']/gi
-    )) {
-      const slug = m[1];
-      if (seen.has(slug) || ["buscar", "directorio"].includes(slug)) continue;
-      seen.add(slug);
-      latest.push({
-        id: "jk:" + slug,
-        ref: slug,
-        title: slug.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()),
-        kind: "series",
-        genres: ["anime"],
-      });
-      if (latest.length >= 24) break;
-    }
-    if (latest.length) {
-      rows.unshift({
-        id: "ultimos",
-        title: "Últimos episodios",
-        items: latest,
-        ref: "dir:ultimos",
-        genre: "anime",
-      });
-    }
-  } catch (_) {}
-
-  // Directorio animes – may be JS template; try search letter pages as fallback rows
-  try {
-    const html = await get("/directorio/?filtro=fecha&tipo=TV&estado=1&fecha=none&temporada=none&orden=desc");
-    let items = parseAnimeItems(html);
-    if (items.length === 0) items = parseHomeCards(html);
-    if (items.length) {
+    var html2 = await get(
+      "/directorio/?filtro=fecha&tipo=TV&estado=1&fecha=none&temporada=none&orden=desc"
+    );
+    var items2 = parseAnimeItems(html2);
+    if (items2.length === 0) items2 = parseHomeCards(html2);
+    if (items2.length) {
       rows.push({
         id: "aire",
-        title: "En emisión",
-        items: items.slice(0, 24),
-        ref: "dir:aire",
+        title: "En emision",
+        items: items2.slice(0, 24),
+        ref: "dir-aire",
         genre: "anime",
       });
     }
-  } catch (_) {}
+  } catch (e) {}
 
   try {
-    const html = await get("/directorio/peliculas/");
-    let items = parseAnimeItems(html);
-    if (items.length === 0) items = parseHomeCards(html);
-    if (items.length) {
+    var html3 = await get("/directorio/peliculas/");
+    var items3 = parseAnimeItems(html3);
+    if (items3.length === 0) items3 = parseHomeCards(html3);
+    if (items3.length) {
+      var movies = [];
+      for (var k = 0; k < items3.length && k < 20; k++) {
+        var it = items3[k];
+        movies.push({
+          id: it.id,
+          ref: it.ref,
+          title: it.title,
+          kind: "movie",
+          poster: it.poster,
+          genres: ["anime"],
+        });
+      }
       rows.push({
         id: "pelis",
-        title: "Películas",
-        items: items.slice(0, 20).map((i) => ({ ...i, kind: "movie" })),
-        ref: "dir:pelis",
+        title: "Peliculas",
+        items: movies,
+        ref: "dir-pelis",
         genre: "peliculas",
       });
     }
-  } catch (_) {}
+  } catch (e) {}
 
-  if (rows.length === 0) {
-    // still return something so Home is not empty-looking forever
-    return [];
-  }
   return rows;
 }
 
 export async function browse(ref, cursor) {
   await Promise.resolve();
-  const page = cursor ? parseInt(cursor, 10) || 1 : 1;
-  let path = "/";
-  if (ref === "dir:aire") {
+  var path = "/";
+  if (ref === "dir-aire") {
     path =
       "/directorio/?filtro=fecha&tipo=TV&estado=1&fecha=none&temporada=none&orden=desc";
-  } else if (ref === "dir:pelis") {
+  } else if (ref === "dir-pelis") {
     path = "/directorio/peliculas/";
-  } else if (ref === "dir:recientes" || ref === "dir:ultimos") {
-    path = "/";
   }
 
-  const html = await get(path);
-  let items = parseAnimeItems(html);
+  var html = await get(path);
+  var items = parseAnimeItems(html);
   if (items.length === 0) items = parseHomeCards(html);
-  if (ref === "dir:pelis") items = items.map((i) => ({ ...i, kind: "movie" }));
-
-  return { items, next: items.length >= 20 ? String(page + 1) : undefined };
+  if (ref === "dir-pelis") {
+    for (var i = 0; i < items.length; i++) items[i].kind = "movie";
+  }
+  return { items: items };
 }
 
 export async function episodes(ref) {
   await Promise.resolve();
-  const slug = String(ref).replace(/\/+$/, "").split("/").filter(Boolean).pop();
-  const html = await get("/" + slug + "/");
+  var slug = String(ref)
+    .replace(/\/+$/, "")
+    .split("/")
+    .filter(Boolean)
+    .pop();
+  var html = await get("/" + slug + "/");
 
-  let title = slug.replace(/-/g, " ");
-  const h3 = html.match(/<h3[^>]*>([\s\S]*?)<\/h3>/i);
-  if (h3) {
-    const t = strip(h3[1]);
-    if (t && t.length > 1 && !/buscado|temporada/i.test(t)) title = t;
+  var title = slug.replace(/-/g, " ");
+  var h3s = html.match(/<h3[^>]*>([\s\S]*?)<\/h3>/gi) || [];
+  for (var i = 0; i < h3s.length; i++) {
+    var t = strip(h3s[i].replace(/<\/?h3[^>]*>/gi, ""));
+    if (t && t.length > 1 && !/buscado|temporada|relacionado/i.test(t)) {
+      title = t;
+      break;
+    }
   }
 
-  let overview = "";
-  const p = html.match(/<p class="scroll">([\s\S]*?)<\/p>/i);
+  var overview = "";
+  var p = html.match(/<p class="scroll">([\s\S]*?)<\/p>/i);
   if (p) overview = strip(p[1]).slice(0, 800);
 
-  let poster = "";
-  const og =
-    html.match(/property=["']og:image["'][^>]+content=["']([^"']+)["']/i) ||
-    html.match(/content=["']([^"']+)["'][^>]+property=["']og:image["']/i);
+  var poster = "";
+  var og = html.match(/property=["']og:image["'][^>]+content=["']([^"']+)["']/i);
+  if (!og) og = html.match(/content=["']([^"']+)["'][^>]+property=["']og:image["']/i);
   if (og) poster = abs(og[1]);
-  if (!poster) {
-    const img = html.match(/cdn\.jkdesa\.com\/assets\/images\/animes\/image\/[^"']+/i);
-    if (img) poster = "https://" + img[0];
-  }
 
-  // Episode count from details: "Episodios:</span> 500"
-  let total = 0;
-  const epCount = html.match(/Episodios:<\/span>\s*(\d+)/i);
-  if (epCount) total = parseInt(epCount[1], 10);
-
-  // Also collect any explicit episode links
-  const nums = new Set();
-  const re = new RegExp(
-    "href=[\"'](?:https?:\\/\\/[^\"']+)?\\/" +
-      slug.replace(/[.*+?^${}()|[\\]\\]/g, "\\$&") +
-      "\\/(\\d+)\\/?[\"']",
-    "gi"
-  );
-  let m;
-  while ((m = re.exec(html)) !== null) {
-    const n = parseInt(m[1], 10);
-    if (n > 0 && n < 10000) nums.add(n);
-  }
-
-  if (total <= 0 && nums.size) total = Math.max(...nums);
-  if (total <= 0) total = 1;
-  // Cap very large lists for UI performance; user can still open by number via browse
+  var total = 1;
+  var epCount = html.match(/Episodios:<\/span>\s*(\d+)/i);
+  if (epCount) total = parseInt(epCount[1], 10) || 1;
   if (total > 2000) total = 2000;
 
-  const episodes = [];
-  for (let n = 1; n <= total; n++) {
+  var episodes = [];
+  for (var n = 1; n <= total; n++) {
     episodes.push({
       season: 1,
       number: n,
@@ -519,84 +501,79 @@ export async function episodes(ref) {
 
   return {
     series: {
-      title,
+      title: title,
       poster: poster || undefined,
       overview: overview || undefined,
       genres: ["anime"],
     },
-    episodes,
+    episodes: episodes,
   };
 }
 
 export async function resolve(ref) {
   await Promise.resolve();
-  let slugEp = String(ref);
-  let forceIndex = -1;
-  if (slugEp.startsWith("server:")) {
-    const parts = slugEp.slice(7).split(":");
-    slugEp = parts[0];
-    forceIndex = parseInt(parts[1], 10);
-  }
-
-  const path = "/" + slugEp.replace(/^\/+|\/+$/g, "") + "/";
-  const html = await get(path);
-
-  let servers = preferOrder(parseServers(html));
-
-  if (servers.length === 0) {
-    throw kino.error("not_found", "sin servidores", {
-      userMessage: "No hay servidores para este capítulo.",
-    });
-  }
-
-  const order =
-    forceIndex >= 0 && forceIndex < servers.length
-      ? [servers[forceIndex], ...servers.filter((_, i) => i !== forceIndex)]
-      : servers;
-
-  let primary = null;
-  const alternatives = [];
-
-  // Try up to 4 servers for a direct stream
-  for (let i = 0; i < order.length && i < 6; i++) {
-    const s = order[i];
-    const stream = await resolveServer(s, BASE + path);
-    if (stream) {
-      if (!primary) primary = stream;
-      else {
-        alternatives.push({
-          label: s.label,
-          ref: "server:" + slugEp + ":" + servers.indexOf(s),
-        });
-      }
-    } else if (i > 0 || primary) {
-      alternatives.push({
-        label: s.label,
-        ref: "server:" + slugEp + ":" + servers.indexOf(s),
-      });
+  var slugEp = String(ref);
+  var forceIndex = -1;
+  if (slugEp.indexOf("server-") === 0) {
+    // server-slug-ep-index  (sin ":")
+    var rest = slugEp.slice(7);
+    var lastDash = rest.lastIndexOf("-");
+    if (lastDash > 0) {
+      forceIndex = parseInt(rest.slice(lastDash + 1), 10);
+      slugEp = rest.slice(0, lastDash);
     }
   }
 
-  // remaining as alternatives
-  for (let i = 0; i < servers.length; i++) {
-    const s = servers[i];
-    if (primary && alternatives.some((a) => a.label === s.label)) continue;
-    if (!primary && i === 0) continue;
-    if (!alternatives.some((a) => a.ref === "server:" + slugEp + ":" + i)) {
-      alternatives.push({ label: s.label, ref: "server:" + slugEp + ":" + i });
+  var path = "/" + slugEp.replace(/^\/+|\/+$/g, "") + "/";
+  var html = await get(path);
+  var servers = preferOrder(parseServers(html));
+
+  if (servers.length === 0) {
+    throw kino.error("not_found", "sin servidores", {
+      userMessage: "No hay servidores para este capitulo.",
+    });
+  }
+
+  var order = servers;
+  if (forceIndex >= 0 && forceIndex < servers.length) {
+    order = [servers[forceIndex]].concat(
+      servers.filter(function (_, i) {
+        return i !== forceIndex;
+      })
+    );
+  }
+
+  var primary = null;
+  var alternatives = [];
+
+  for (var i = 0; i < order.length && i < 6; i++) {
+    var s = order[i];
+    var stream = await resolveServer(s, BASE + path);
+    var idx = servers.indexOf(s);
+    var altRef = "server-" + slugEp + "-" + idx;
+    if (stream) {
+      if (!primary) primary = stream;
+      else alternatives.push({ label: s.label.slice(0, 48), ref: altRef });
+    } else {
+      alternatives.push({ label: s.label.slice(0, 48), ref: altRef });
     }
   }
 
   if (!primary) {
-    // last resort: first non-download URL
-    const s = order.find((x) => !/mega|mediafire/i.test(x.name)) || order[0];
+    var s0 = order[0];
+    for (var j = 0; j < order.length; j++) {
+      if (!/mega|mediafire/i.test(order[j].name)) {
+        s0 = order[j];
+        break;
+      }
+    }
     primary = {
-      url: s.url,
-      label: s.label,
+      url: s0.url,
+      label: s0.label.slice(0, 48),
       headers: { Referer: BASE + path, "User-Agent": UA },
     };
   }
 
-  if (alternatives.length) primary.alternatives = alternatives.slice(0, 12);
+  if (alternatives.length) primary.alternatives = alternatives.slice(0, 8);
   return primary;
 }
