@@ -1,28 +1,35 @@
 /// <reference path="./kino.d.ts" />
 /**
- * JKAnime plugin for Kino — v1.2.1
- * jkanime.bz — ids sin ":" (Kino descarta id con caracteres fuera de [A-Za-z0-9._~-])
+ * JKAnime plugin for Kino — v1.3.1
+ * jkanime.bz — Desu/Nozomi/Mp4Upload + Home con miniaturas
  */
 
 const BASE = "https://jkanime.bz";
 const UA =
   "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36";
 
-function hdr() {
-  return {
+function hdr(extra) {
+  var h = {
     "User-Agent": UA,
     Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "es-ES,es;q=0.9",
     Referer: BASE + "/",
   };
+  if (extra) {
+    for (var k in extra) h[k] = extra[k];
+  }
+  return h;
 }
 
-async function get(path) {
-  const url = path.startsWith("http") ? path : BASE + path;
-  const r = await kino.fetch(url, { headers: hdr(), timeoutMs: 18000 });
+async function get(path, referer) {
+  var url = path.indexOf("http") === 0 ? path : BASE + path;
+  var r = await kino.fetch(url, {
+    headers: hdr(referer ? { Referer: referer } : null),
+    timeoutMs: 18000,
+  });
   if (!r.ok) {
-    throw kino.error("unavailable", "jkanime " + r.status, {
-      userMessage: "jkanime.bz no respondió (" + r.status + ").",
+    throw kino.error("unavailable", "http " + r.status, {
+      userMessage: "No se pudo cargar la pagina (" + r.status + ").",
     });
   }
   return await r.text();
@@ -60,29 +67,11 @@ function abs(u) {
   return BASE + "/" + u;
 }
 
-function pretty(name) {
-  var n = String(name || "").toLowerCase();
-  if (n.indexOf("streamwish") >= 0 || n.indexOf("sfastwish") >= 0) return "StreamWish";
-  if (n.indexOf("voe") >= 0) return "VOE";
-  if (n.indexOf("mixdrop") >= 0) return "MixDrop";
-  if (n.indexOf("mp4upload") >= 0) return "Mp4Upload";
-  if (n.indexOf("filemoon") >= 0) return "Filemoon";
-  if (n.indexOf("streamtape") >= 0) return "Streamtape";
-  if (n.indexOf("vidhide") >= 0) return "Vidhide";
-  if (n.indexOf("mega") >= 0) return "Mega";
-  if (n.indexOf("mediafire") >= 0) return "Mediafire";
-  if (n.indexOf("ok") >= 0) return "OK.ru";
-  if (n.indexOf("desu") >= 0 || n.indexOf("jkplayer") >= 0) return "JKPlayer";
-  return name ? String(name) : "Servidor";
-}
-
-/** Solo [A-Za-z0-9._~-] — sin ":" ni otros símbolos */
 function makeId(slug) {
   return String(slug || "x").replace(/[^A-Za-z0-9._~-]/g, "-").slice(0, 120);
 }
 
 function norm(s) {
-  // sin String.normalize (puede faltar en QuickJS)
   return String(s || "")
     .toLowerCase()
     .replace(/[áàäâ]/g, "a")
@@ -128,7 +117,6 @@ function rank(items, q) {
 function parseAnimeItems(html) {
   var items = [];
   var seen = {};
-  // Partir por anime__item (con o sin comillas extra)
   var parts = html.split(/anime__item/);
   for (var i = 1; i < parts.length; i++) {
     var block = parts[i].slice(0, 2500);
@@ -137,13 +125,7 @@ function parseAnimeItems(html) {
     var slug = hrefM[1];
     if (!slug || seen[slug]) continue;
     if (
-      slug === "buscar" ||
-      slug === "directorio" ||
-      slug === "dash" ||
-      slug === "genero" ||
-      slug === "horario" ||
-      slug === "peliculas" ||
-      slug === "ovas"
+      /^(buscar|directorio|dash|genero|horario|peliculas|ovas|comunidad)$/.test(slug)
     )
       continue;
     seen[slug] = true;
@@ -161,150 +143,138 @@ function parseAnimeItems(html) {
     var bg = block.match(/data-setbg=["']([^"']+)["']/i);
     if (bg) poster = abs(bg[1]);
 
-    var kind = /pelicula|movie/i.test(block) ? "movie" : "series";
-
     items.push({
       id: makeId(slug),
       ref: slug,
       title: title,
-      kind: kind,
-      poster: poster || undefined,
+      kind: /pelicula|movie/i.test(block) ? "movie" : "series",
+      poster: poster || posterFor(slug),
       genres: ["anime"],
     });
   }
   return items;
+}
+
+function posterFor(slug) {
+  if (!slug) return undefined;
+  return "https://cdn.jkdesa.com/assets/images/animes/image/" + slug + ".jpg";
 }
 
 function parseHomeCards(html) {
   var items = [];
   var seen = {};
+  // custom_thumb_home: enlace + img (src/alt en cualquier orden)
   var re =
-    /href=["']https?:\/\/jkanime\.bz\/([a-z0-9-]+)\/?["'][^>]*>[\s\S]{0,120}?(?:class="[^"]*card-title[^"]*"|<h5)/gi;
-  // Más robusto: card-title con enlace
-  var re2 =
-    /<h5[^>]*class="[^"]*card-title[^"]*"[^>]*>\s*<a[^>]+href=["']https?:\/\/[^"']+\/([a-z0-9-]+)\/?["'][^>]*>([\s\S]*?)<\/a>/gi;
+    /custom_thumb_home">\s*<a href="https?:\/\/[^"]+\/([a-z0-9-]+)\/?"[^>]*>\s*<img\b([^>]+)>/gi;
   var m;
-  while ((m = re2.exec(html)) !== null) {
+  while ((m = re.exec(html)) !== null) {
     var slug = m[1];
-    if (seen[slug]) continue;
-    if (slug === "buscar" || slug === "directorio" || slug === "dash") continue;
+    if (seen[slug] || /^(buscar|directorio|dash)$/.test(slug)) continue;
     seen[slug] = true;
-    var poster = "";
-    var before = html.slice(Math.max(0, m.index - 900), m.index);
-    var img = before.match(/src=["'](https?:\/\/[^"']+\.(?:jpg|jpeg|png|webp)[^"']*)["']/i);
-    if (img) poster = img[1];
+    var imgTag = m[2] || "";
+    var srcM = imgTag.match(/src=["']([^"']+)["']/i);
+    var altM = imgTag.match(/alt=["']([^"']*)["']/i);
+    var poster = (srcM && srcM[1]) || posterFor(slug);
+    var title = altM ? strip(altM[1]) : "";
+    if (!title) {
+      var after = html.slice(m.index, m.index + 800);
+      var t = after.match(/card-title[^>]*>\s*<a[^>]*>([\s\S]*?)<\/a>/i);
+      if (t) title = strip(t[1]);
+    }
+    if (!title) title = slug.replace(/-/g, " ");
     items.push({
       id: makeId(slug),
       ref: slug,
-      title: strip(m[2]),
+      title: title,
       kind: "series",
-      poster: poster || undefined,
+      poster: poster,
       genres: ["anime"],
     });
+  }
+  // Fallback card-title
+  if (items.length === 0) {
+    var re2 =
+      /<h5[^>]*class="[^"]*card-title[^"]*"[^>]*>\s*<a[^>]+href=["']https?:\/\/[^"']+\/([a-z0-9-]+)\/?"[^>]*>([\s\S]*?)<\/a>/gi;
+    while ((m = re2.exec(html)) !== null) {
+      var slug2 = m[1];
+      if (seen[slug2]) continue;
+      seen[slug2] = true;
+      items.push({
+        id: makeId(slug2),
+        ref: slug2,
+        title: strip(m[2]),
+        kind: "series",
+        poster: posterFor(slug2),
+        genres: ["anime"],
+      });
+    }
   }
   return items;
 }
 
-function parseServers(html) {
-  var servers = [];
-  var m = html.match(/var\s+servers\s*=\s*(\[[\s\S]*?\]);/);
-  if (m) {
-    try {
-      var arr = JSON.parse(m[1]);
-      for (var i = 0; i < arr.length; i++) {
-        var s = arr[i];
-        var url = s.remote || "";
-        if (url && url.indexOf("http") !== 0) url = b64(url).replace(/\n/g, "").trim();
-        if (!url || url.indexOf("http") !== 0) continue;
-        var name = String(s.server || "server");
-        servers.push({
-          name: name.toLowerCase(),
-          url: url,
-          label: pretty(name) + (s.size ? " (" + s.size + ")" : ""),
-        });
-      }
-    } catch (e) {}
+/** Ultimos episodios con miniatura de capitulo */
+function parseLatestEpisodes(html) {
+  var items = [];
+  var seen = {};
+  // href episodio seguido de img en ~400 chars
+  var re =
+    /href="https?:\/\/jkanime\.bz\/([a-z0-9-]+)\/(\d+)\/?"[\s\S]{0,500}?src="(https:\/\/cdn\.jkdesa\.com[^"]+)"/gi;
+  var m;
+  while ((m = re.exec(html)) !== null) {
+    var slug = m[1];
+    var ep = m[2];
+    if (seen[slug] || /^(buscar|directorio)$/.test(slug)) continue;
+    seen[slug] = true;
+    var poster = m[3];
+    // titulo cerca
+    var chunk = html.slice(Math.max(0, m.index - 100), m.index + 500);
+    var title = "";
+    var t = chunk.match(/<(?:h5|h6|span)[^>]*>([\s\S]*?)<\/(?:h5|h6|span)>/i);
+    if (t) title = strip(t[1]);
+    if (!title || title.length < 2) title = slug.replace(/-/g, " ");
+    items.push({
+      id: makeId(slug),
+      ref: slug,
+      title: title,
+      kind: "series",
+      poster: poster || posterFor(slug),
+      quality: "Ep " + ep,
+      genres: ["anime"],
+    });
+    if (items.length >= 30) break;
   }
-
-  // iframes jkplayer
-  var re = /src=["'](https?:\/\/[^"']*jkplayer[^"']+)["']/gi;
-  var m2;
-  while ((m2 = re.exec(html)) !== null) {
-    var u = m2[1];
-    var exists = false;
-    for (var j = 0; j < servers.length; j++) if (servers[j].url === u) exists = true;
-    if (!exists) servers.push({ name: "jkplayer", url: u, label: "JKPlayer" });
-  }
-
-  return servers;
+  return items;
 }
 
-function preferOrder(servers) {
-  var prefer = "streamwish";
-  try {
-    if (kino.config && kino.config.get) prefer = kino.config.get("preferServer") || prefer;
-  } catch (e) {}
-  if (prefer && prefer !== "auto") {
-    for (var i = 0; i < servers.length; i++) {
-      if (
-        servers[i].name.indexOf(prefer) >= 0 ||
-        servers[i].label.toLowerCase().indexOf(prefer) >= 0
-      ) {
-        var p = servers.splice(i, 1)[0];
-        servers.unshift(p);
-        break;
-      }
-    }
+/** Destacados del slider */
+function parseHero(html) {
+  var items = [];
+  var seen = {};
+  var re =
+    /data-setbg="(https:\/\/cdn\.jkdesa\.com[^"]+)"[\s\S]{0,1200}?href="https?:\/\/jkanime\.bz\/([a-z0-9-]+)\/?"/gi;
+  var m;
+  while ((m = re.exec(html)) !== null) {
+    var poster = m[1];
+    var slug = m[2];
+    if (seen[slug] || /^(buscar|directorio|dash)$/.test(slug)) continue;
+    seen[slug] = true;
+    var chunk = html.slice(m.index, m.index + 1200);
+    var title = "";
+    var t = chunk.match(/<h2[^>]*>\s*<a[^>]*>([\s\S]*?)<\/a>/i);
+    if (!t) t = chunk.match(/<h2[^>]*>([\s\S]*?)<\/h2>/i);
+    if (t) title = strip(t[1]);
+    if (!title) title = slug.replace(/-/g, " ");
+    items.push({
+      id: makeId(slug),
+      ref: slug,
+      title: title,
+      kind: "series",
+      poster: poster,
+      genres: ["anime"],
+    });
+    if (items.length >= 12) break;
   }
-  var playable = [];
-  var downloads = [];
-  for (var k = 0; k < servers.length; k++) {
-    if (/mega|mediafire|google/.test(servers[k].name)) downloads.push(servers[k]);
-    else playable.push(servers[k]);
-  }
-  return playable.concat(downloads);
-}
-
-async function resolveServer(server, referer) {
-  var url = server.url;
-  if (/\.(m3u8|mp4)(\?|$)/i.test(url)) {
-    return {
-      url: url,
-      mime: /\.m3u8/i.test(url) ? "application/x-mpegURL" : "video/mp4",
-      label: server.label,
-      headers: { Referer: referer || BASE + "/", "User-Agent": UA },
-    };
-  }
-  if (/mega\.nz|mediafire\.com/i.test(url)) return null;
-
-  try {
-    var body = await get(url);
-    var patterns = [
-      /(https?:\/\/[^"'\s\\]+\.m3u8[^"'\s\\]*)/i,
-      /(https?:\/\/[^"'\s\\]+\.mp4[^"'\s\\]*)/i,
-      /file\s*:\s*["'](https?:\/\/[^"']+)["']/i,
-      /sources?\s*:\s*\[[\s\S]*?["'](https?:\/\/[^"']+)["']/i,
-      /<source[^>]+src=["'](https?:\/\/[^"']+)["']/i,
-    ];
-    for (var i = 0; i < patterns.length; i++) {
-      var mm = body.match(patterns[i]);
-      if (mm) {
-        var u = mm[1]
-          .replace(/\\\//g, "/")
-          .replace(/\\u0026/g, "&")
-          .replace(/&amp;/g, "&");
-        if (u.indexOf("http") === 0 && !/google|facebook|ads/i.test(u)) {
-          return {
-            url: u,
-            mime: /\.m3u8/i.test(u) ? "application/x-mpegURL" : "video/mp4",
-            label: server.label,
-            headers: { Referer: url, "User-Agent": UA },
-          };
-        }
-      }
-    }
-  } catch (e) {}
-  return null;
+  return items;
 }
 
 function dedupe(items) {
@@ -319,13 +289,161 @@ function dedupe(items) {
   return out;
 }
 
+/** Extrae lista de servidores del HTML del episodio */
+function parseServers(html) {
+  var servers = [];
+
+  // 1) Desu / Nozomi vía jkplayer/um y umv (prioridad máxima)
+  var ums = html.match(/https?:\/\/[^"'\s]*jkplayer\/um\?[^"'\s]+/gi) || [];
+  var umvs = html.match(/https?:\/\/[^"'\s]*jkplayer\/umv\?[^"'\s]+/gi) || [];
+  for (var i = 0; i < ums.length; i++) {
+    servers.push({ name: "desu", url: ums[i].replace(/&amp;/g, "&"), label: "Desu", priority: 1 });
+  }
+  for (var j = 0; j < umvs.length; j++) {
+    servers.push({ name: "nozomi", url: umvs[j].replace(/&amp;/g, "&"), label: "Nozomi", priority: 2 });
+  }
+
+  // 2) var servers JSON
+  var m = html.match(/var\s+servers\s*=\s*(\[[\s\S]*?\]);/);
+  if (m) {
+    try {
+      var arr = JSON.parse(m[1]);
+      for (var k = 0; k < arr.length; k++) {
+        var s = arr[k];
+        var url = s.remote || "";
+        if (url && url.indexOf("http") !== 0) url = b64(url).replace(/\n/g, "").trim();
+        if (!url || url.indexOf("http") !== 0) continue;
+        var name = String(s.server || "server").toLowerCase();
+        // saltar descargas
+        if (/mega|mediafire/.test(name)) continue;
+        var priority = 50;
+        if (/mp4upload/.test(name)) priority = 3;
+        else if (/streamwish|sfastwish/.test(name)) priority = 10;
+        else if (/voe/.test(name)) priority = 15;
+        else if (/filemoon|bysekoze/.test(name)) priority = 20;
+        else if (/mixdrop|mxdrop/.test(name)) priority = 25;
+        else if (/streamtape/.test(name)) priority = 30;
+        servers.push({
+          name: name,
+          url: url,
+          label: labelOf(name),
+          priority: priority,
+        });
+      }
+    } catch (e) {}
+  }
+
+  // ordenar por prioridad
+  servers.sort(function (a, b) {
+    return (a.priority || 99) - (b.priority || 99);
+  });
+
+  // dedupe por url
+  var seen = {};
+  var out = [];
+  for (var n = 0; n < servers.length; n++) {
+    if (seen[servers[n].url]) continue;
+    seen[servers[n].url] = true;
+    out.push(servers[n]);
+  }
+  return out;
+}
+
+function labelOf(name) {
+  if (/mp4upload/.test(name)) return "Mp4Upload";
+  if (/streamwish|sfastwish/.test(name)) return "StreamWish";
+  if (/voe/.test(name)) return "VOE";
+  if (/mixdrop|mxdrop/.test(name)) return "MixDrop";
+  if (/filemoon|bysekoze/.test(name)) return "Filemoon";
+  if (/streamtape/.test(name)) return "Streamtape";
+  if (/vidhide/.test(name)) return "Vidhide";
+  if (/dood/.test(name)) return "Doodstream";
+  if (/desu/.test(name)) return "Desu";
+  if (/nozomi/.test(name)) return "Nozomi";
+  return name ? name.charAt(0).toUpperCase() + name.slice(1) : "Servidor";
+}
+
+/** Limpia URL de media encontrada en HTML */
+function cleanMediaUrl(u) {
+  if (!u) return "";
+  u = u
+    .replace(/\\\//g, "/")
+    .replace(/\\u0026/g, "&")
+    .replace(/&amp;/g, "&")
+    .replace(/\\/g, "")
+    .trim();
+  // quitar comillas residuales
+  u = u.replace(/^["']|["']$/g, "");
+  return u;
+}
+
+/** Busca m3u8 o mp4 en el cuerpo de un embed */
+function findMediaInBody(body) {
+  var patterns = [
+    /(https?:\/\/[^"'\s\\<>]+\.m3u8[^"'\s\\<>]*)/i,
+    /(https?:\/\/[^"'\s\\<>]+:[0-9]+\/[^"'\s\\<>]+\.mp4[^"'\s\\<>]*)/i,
+    /(https?:\/\/[^"'\s\\<>]+\.mp4[^"'\s\\<>]*)/i,
+    /src:\s*["'](https?:\/\/[^"']+\.mp4[^"']*)["']/i,
+    /file:\s*["'](https?:\/\/[^"']+)["']/i,
+    /url:\s*["'](https?:\/\/[^"']+\.m3u8[^"']*)["']/i,
+    /url:\s*["'](https?:\/\/[^"']+\.mp4[^"']*)["']/i,
+    /video:\s*\{\s*url:\s*["'](https?:\/\/[^"']+)["']/i,
+    /<source[^>]+src=["'](https?:\/\/[^"']+)["']/i,
+  ];
+  for (var i = 0; i < patterns.length; i++) {
+    var mm = body.match(patterns[i]);
+    if (mm) {
+      var u = cleanMediaUrl(mm[1]);
+      if (
+        u.indexOf("http") === 0 &&
+        !/\.(js|css)(\?|$)/i.test(u) &&
+        !/google|facebook|ads/i.test(u)
+      ) {
+        return u;
+      }
+    }
+  }
+  return null;
+}
+
+async function resolveServer(server, pageReferer) {
+  var url = server.url;
+
+  // Ya es media directa
+  if (/\.(m3u8|mp4)(\?|$)/i.test(url)) {
+    return {
+      url: url,
+      mime: /\.m3u8/i.test(url) ? "application/x-mpegURL" : "video/mp4",
+      label: server.label,
+      headers: { Referer: pageReferer || BASE + "/", "User-Agent": UA },
+    };
+  }
+
+  try {
+    var body = await get(url, pageReferer);
+    var media = findMediaInBody(body);
+    if (media) {
+      return {
+        url: media,
+        mime: /\.m3u8/i.test(media) ? "application/x-mpegURL" : "video/mp4",
+        label: server.label,
+        headers: {
+          Referer: url.indexOf("jkanime") >= 0 ? BASE + "/" : url,
+          "User-Agent": UA,
+        },
+      };
+    }
+  } catch (e) {}
+
+  return null;
+}
+
 // -------------------- exports --------------------
 
 export async function search(query) {
   await Promise.resolve();
   var q = ((query && query.q) || "").trim();
   if (!q) return [];
-
   var html = await get("/buscar/?q=" + encodeURIComponent(q));
   var items = parseAnimeItems(html);
   if (items.length === 0) items = parseHomeCards(html);
@@ -338,39 +456,27 @@ export async function search(query) {
 export async function home() {
   await Promise.resolve();
   var rows = [];
-
   var html = await get("/");
+
+  var hero = parseHero(html);
+  var latest = parseLatestEpisodes(html);
   var cards = parseHomeCards(html);
 
-  // Últimos episodios (enlaces /slug/N/)
-  var latest = [];
-  var seen = {};
-  var reEp = /href=["']https?:\/\/jkanime\.bz\/([a-z0-9-]+)\/(\d+)\/?["']/gi;
-  var m;
-  while ((m = reEp.exec(html)) !== null) {
-    var slug = m[1];
-    if (seen[slug]) continue;
-    if (slug === "buscar" || slug === "directorio") continue;
-    seen[slug] = true;
-    // buscar título en cards si existe
-    var title = slug.replace(/-/g, " ");
-    for (var i = 0; i < cards.length; i++) {
-      if (cards[i].ref === slug) {
-        title = cards[i].title;
-        break;
-      }
-    }
-    latest.push({
-      id: makeId(slug),
-      ref: slug,
-      title: title,
-      kind: "series",
-      poster: undefined,
-      genres: ["anime"],
+  if (hero.length) {
+    rows.push({
+      id: "destacados",
+      title: "Destacados",
+      items: hero,
+      ref: "dir-destacados",
+      genre: "anime",
     });
-    if (latest.length >= 24) break;
   }
+
   if (latest.length) {
+    // completar poster si falta
+    for (var i = 0; i < latest.length; i++) {
+      if (!latest[i].poster) latest[i].poster = posterFor(latest[i].ref);
+    }
     rows.push({
       id: "ultimos",
       title: "Ultimos episodios",
@@ -381,6 +487,9 @@ export async function home() {
   }
 
   if (cards.length) {
+    for (var j = 0; j < cards.length; j++) {
+      if (!cards[j].poster) cards[j].poster = posterFor(cards[j].ref);
+    }
     rows.push({
       id: "recientes",
       title: "Animes recientes",
@@ -390,12 +499,17 @@ export async function home() {
     });
   }
 
+  // En emision: reutilizar destacados/cards con badge si no hay directorio SSR
   try {
     var html2 = await get(
       "/directorio/?filtro=fecha&tipo=TV&estado=1&fecha=none&temporada=none&orden=desc"
     );
     var items2 = parseAnimeItems(html2);
     if (items2.length === 0) items2 = parseHomeCards(html2);
+    if (items2.length === 0 && hero.length) items2 = hero.slice();
+    for (var k = 0; k < items2.length; k++) {
+      if (!items2[k].poster) items2[k].poster = posterFor(items2[k].ref);
+    }
     if (items2.length) {
       rows.push({
         id: "aire",
@@ -411,19 +525,22 @@ export async function home() {
     var html3 = await get("/directorio/peliculas/");
     var items3 = parseAnimeItems(html3);
     if (items3.length === 0) items3 = parseHomeCards(html3);
-    if (items3.length) {
-      var movies = [];
-      for (var k = 0; k < items3.length && k < 20; k++) {
-        var it = items3[k];
-        movies.push({
-          id: it.id,
-          ref: it.ref,
-          title: it.title,
-          kind: "movie",
-          poster: it.poster,
-          genres: ["anime"],
-        });
-      }
+    // Fallback: filtrar cards de home con badge pelicula no disponible → usar slug search
+    if (items3.length === 0) {
+      // pagina buscar tipo pelicula no fiable; dejar vacio
+    }
+    var movies = [];
+    for (var n = 0; n < items3.length && n < 24; n++) {
+      movies.push({
+        id: items3[n].id,
+        ref: items3[n].ref,
+        title: items3[n].title,
+        kind: "movie",
+        poster: items3[n].poster || posterFor(items3[n].ref),
+        genres: ["anime"],
+      });
+    }
+    if (movies.length) {
       rows.push({
         id: "pelis",
         title: "Peliculas",
@@ -446,7 +563,6 @@ export async function browse(ref, cursor) {
   } else if (ref === "dir-pelis") {
     path = "/directorio/peliculas/";
   }
-
   var html = await get(path);
   var items = parseAnimeItems(html);
   if (items.length === 0) items = parseHomeCards(html);
@@ -515,7 +631,6 @@ export async function resolve(ref) {
   var slugEp = String(ref);
   var forceIndex = -1;
   if (slugEp.indexOf("server-") === 0) {
-    // server-slug-ep-index  (sin ":")
     var rest = slugEp.slice(7);
     var lastDash = rest.lastIndexOf("-");
     if (lastDash > 0) {
@@ -525,8 +640,26 @@ export async function resolve(ref) {
   }
 
   var path = "/" + slugEp.replace(/^\/+|\/+$/g, "") + "/";
+  var pageUrl = BASE + path;
   var html = await get(path);
-  var servers = preferOrder(parseServers(html));
+  var servers = parseServers(html);
+
+  // Preferencia del usuario
+  try {
+    var prefer = kino.config && kino.config.get ? kino.config.get("preferServer") : "";
+    if (prefer && prefer !== "auto") {
+      for (var i = 0; i < servers.length; i++) {
+        if (
+          servers[i].name.indexOf(prefer) >= 0 ||
+          servers[i].label.toLowerCase().indexOf(prefer) >= 0
+        ) {
+          var p = servers.splice(i, 1)[0];
+          servers.unshift(p);
+          break;
+        }
+      }
+    }
+  } catch (e) {}
 
   if (servers.length === 0) {
     throw kino.error("not_found", "sin servidores", {
@@ -545,13 +678,14 @@ export async function resolve(ref) {
 
   var primary = null;
   var alternatives = [];
-
-  for (var i = 0; i < order.length && i < 6; i++) {
+  // Intentar Desu, Nozomi, Mp4Upload primero (hasta 5)
+  for (var i = 0; i < order.length && i < 5; i++) {
     var s = order[i];
-    var stream = await resolveServer(s, BASE + path);
-    var idx = servers.indexOf(s);
-    var altRef = "server-" + slugEp + "-" + idx;
-    if (stream) {
+    var stream = await resolveServer(s, pageUrl);
+    var idx = -1;
+    for (var t = 0; t < servers.length; t++) if (servers[t].url === s.url) idx = t;
+    var altRef = "server-" + slugEp.replace(/\//g, ".") + "-" + (idx >= 0 ? idx : i);
+    if (stream && stream.url && /\.(m3u8|mp4)(\?|$)/i.test(stream.url)) {
       if (!primary) primary = stream;
       else alternatives.push({ label: s.label.slice(0, 48), ref: altRef });
     } else {
@@ -559,19 +693,18 @@ export async function resolve(ref) {
     }
   }
 
+  // Resto como alternativas sin resolver
+  for (var j = 5; j < servers.length && alternatives.length < 8; j++) {
+    alternatives.push({
+      label: servers[j].label.slice(0, 48),
+      ref: "server-" + slugEp.replace(/\//g, ".") + "-" + j,
+    });
+  }
+
   if (!primary) {
-    var s0 = order[0];
-    for (var j = 0; j < order.length; j++) {
-      if (!/mega|mediafire/i.test(order[j].name)) {
-        s0 = order[j];
-        break;
-      }
-    }
-    primary = {
-      url: s0.url,
-      label: s0.label.slice(0, 48),
-      headers: { Referer: BASE + path, "User-Agent": UA },
-    };
+    throw kino.error("unavailable", "sin stream directo", {
+      userMessage: "No se pudo obtener el video. Prueba otro servidor en el menu.",
+    });
   }
 
   if (alternatives.length) primary.alternatives = alternatives.slice(0, 8);
