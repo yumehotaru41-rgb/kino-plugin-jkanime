@@ -1,21 +1,29 @@
 {
   "id": "jkanime",
   "name": "JKAnime",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "apiVersion": 6,
   "entry": "plugin.js",
   "description": "Anime, OVAs y películas de jkanime.net. Búsqueda precisa y selección manual de servidor.",
   "author": "community",
-  "homepage": "https://jkanime.net",
+  "homepage": "https://github.com/yumehotaru41-rgb/kino-plugin-jkanime",
   "hosts": [
     "jkanime.net",
     "*.jkanime.net",
+    "jkanime.bz",
+    "*.jkanime.bz",
+    "cdn.jkdesu.com",
+    "*.jkdesu.com",
+    "cdn.jkanime.net",
     "streamwish.com",
     "*.streamwish.com",
+    "streamwish.to",
+    "*.streamwish.to",
     "voe.sx",
     "*.voe.sx",
     "mixdrop.co",
     "*.mixdrop.co",
+    "mixdrop.ag",
     "mp4upload.com",
     "*.mp4upload.com",
     "filemoon.sx",
@@ -26,8 +34,7 @@
     "*.ok.ru",
     "embedsito.com",
     "*.embedsito.com",
-    "cdn.jkanime.net",
-    "*.cdn.jkanime.net"
+    "www.mp4upload.com"
   ],
   "streamHosts": "any",
   "capabilities": ["search", "home", "browse", "episodes", "resolve"],
@@ -43,6 +50,16 @@
   },
   "settings": [
     {
+      "key": "baseHost",
+      "label": "Dominio",
+      "type": "select",
+      "default": "jkanime.net",
+      "options": [
+        { "value": "jkanime.net", "label": "jkanime.net" },
+        { "value": "jkanime.bz", "label": "jkanime.bz (espejo)" }
+      ]
+    },
+    {
       "key": "preferServer",
       "label": "Servidor preferido",
       "type": "select",
@@ -54,20 +71,10 @@
         { "value": "mixdrop", "label": "MixDrop" },
         { "value": "mp4upload", "label": "Mp4Upload" },
         { "value": "filemoon", "label": "Filemoon" },
-        { "value": "streamtape", "label": "Streamtape" }
-      ]
-    },
-    {
-      "key": "quality",
-      "label": "Calidad preferida",
-      "type": "select",
-      "default": "auto",
-      "options": [
-        { "value": "auto", "label": "Automática" },
-        { "value": "hd", "label": "HD / mejor calidad" },
-        { "value": "sd", "label": "SD / ahorro de datos" }
+        { "value": "streamtape", "label": "Streamtape" },
+        { "value": "desu", "label": "Desu / Nozomi" }
       ]
     }
   ],
-  "browser": true
+  "browser": "pages"
 }

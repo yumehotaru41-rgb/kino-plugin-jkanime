@@ -1,48 +1,49 @@
 # JKAnime — plugin de Kino
 
-Plugin de [Kino](https://kinotvapp.github.io/) para **jkanime.net**.
+Plugin de [Kino](https://kinotvapp.github.io/) para **jkanime.net** (y espejo jkanime.bz).
+
+**Versión 1.1.0**
 
 ## Qué hace
 
-- **search** — Búsqueda precisa: prioriza coincidencias exactas y por prefijo.
-- **home** — Filas: En emisión, Animes recientes, Películas, Directorio.
-- **browse** — “Ver más” de cada fila con paginación.
-- **episodes** — Lista de episodios de un anime (o película como un solo episodio).
-- **resolve** — Obtiene el stream y ofrece **selección manual de servidor** mediante alternativas.
+- **search** — Usa el endpoint AJAX `/ajax/ajax_search/` y, si falla, la página `/buscar/`. Ranking por coincidencia exacta/prefijo.
+- **home** — Filas: Últimos episodios, En emisión, Animes, Películas.
+- **browse** — “Ver más” con paginación.
+- **episodes** — Lista vía `/ajax/pagination_episodes/{id}/{pag}/` (como CloudStream).
+- **resolve** — Extrae `var servers = [{ remote: base64 }]` y otros embeds; ofrece **alternativas** para elegir servidor a mano.
 
-## Ajustes (Configurar)
+## Ajustes
 
-| Ajuste | Opciones |
-|--------|----------|
-| **Servidor preferido** | Automático · StreamWish · VOE · MixDrop · Mp4Upload · Filemoon · Streamtape |
-| **Calidad preferida** | Automática · HD · SD |
+| Ajuste | Descripción |
+|--------|-------------|
+| **Dominio** | `jkanime.net` o espejo `jkanime.bz` |
+| **Servidor preferido** | Automático, StreamWish, VOE, MixDrop, etc. |
 
-Al reproducir, Kino muestra los otros servidores como alternativas para que elijas a mano.
+## Instalación
 
-## Instalación en Kino
+```
+yumehotaru41-rgb/kino-plugin-jkanime
+```
 
-1. Publica este repositorio en GitHub como **público**.
-2. Añade el topic `kino-plugin` (About → Topics).
-3. En Kino: **Ajustes → Plugins → Agregar** y escribe `tu-usuario/kino-plugin-jkanime`.
+En Kino: **Ajustes → Plugins → Agregar**.
 
-También puedes pegar la URL del `kino-plugin.json`.
+Añade el topic `kino-plugin` en el repositorio de GitHub.
+
+## Cloudflare
+
+El sitio usa Cloudflare. El plugin declara `"browser": "pages"` para abrir páginas en el navegador oculto cuando el fetch normal recibe el challenge. En el dispositivo real suele funcionar mejor que desde un servidor.
+
+Si no carga nada:
+
+1. Cambia el **Dominio** a `jkanime.bz` en Configurar.
+2. Actualiza el plugin (sube esta versión 1.1.0 al repo).
+3. Reinstala o fuerza actualización en Kino.
 
 ## Archivos
 
 ```
-kino-plugin.json   manifiesto
-plugin.js          código
-icon.png           ícono 128×128
-README.md          este archivo
+kino-plugin.json
+plugin.js
+icon.png
+README.md
 ```
-
-## Notas
-
-- jkanime.net usa Cloudflare; en algunos aparatos `kino.fetch` puede fallar y entonces se usa el navegador oculto (`browser: true`) solo en `resolve`.
-- Los hosts de los embeds (StreamWish, VOE, etc.) están declarados; si aparece un CDN nuevo, Kino preguntará permiso una vez o se usa `streamHosts: "any"`.
-- Contenido en español. No requiere cuenta.
-
-## Licencia
-
-Código del plugin: uso libre para la comunidad de Kino.
-El contenido pertenece a jkanime.net.
